@@ -2,27 +2,35 @@ name: Build and Package Windows Executable
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "develop" ]
   pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "develop" ]
   workflow_dispatch:
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
   build:
-    runs-on: windows-2022 # 建议指定 windows-2022，环境对该时期的 CMake/MSVC 最稳定
+    runs-on: windows-2022
 
     steps:
-      # 1. 递归拉取所有 Submodules 并下载 LFS 文件
-      - name: Checkout repository with submodules and LFS
+      # 1. 仅拉取代码与子模块，暂时关闭 lfs 自动下载避免 404
+      - name: Checkout repository without LFS
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          lfs: true
+          lfs: false
           fetch-depth: 1
 
-      # 2. 检查并确保 LFS 资源完整
-      - name: Ensure Git LFS pulled
-        run: git lfs pull
+      # 2. 将 LFS 源重定向至上游原仓库并完成拉取
+      - name: Pull LFS objects from upstream
+        shell: pwsh
+        run: |
+          git lfs install
+          # 将 LFS 远程端点临时指向原项目仓库
+          git config lfs.url "https://github.com/jjonescz/ipasim.git/info/lfs"
+          git lfs pull
 
       # 3. 初始化 64位 MSVC 编译环境
       - name: Set up MSVC Developer Command Prompt
@@ -30,44 +38,40 @@ jobs:
         with:
           arch: x64
 
-      # 4. 执行 CMake 配置（生成 VS/MSBuild 工程）
+      # 4. 配置 CMake
       - name: Configure CMake
         run: |
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=Release `
             -A x64
 
-      # 5. 编译整个工程（Release 模式）
+      # 5. 编译工程
       - name: Build with CMake
         run: |
           cmake --build build --config Release --parallel
 
-      # 6. 打包 EXE 及其所有依赖项（保证免安装且不缺失 DLL）
+      # 6. 打包收集可执行文件及所需 DLL 运行库
       - name: Package Distributable
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
 
-          # 1. 复制所有生成好的可执行文件与项目动态库
+          # 收集 Release 输出的可执行文件与 DLL
           Get-ChildItem -Path build -Recurse -Include *.exe, *.dll | Where-Object { $_.FullName -like "*Release*" } | ForEach-Object {
               Copy-Item -Path $_.FullName -Destination dist/ -Force
           }
 
-          # 2. 补漏：如果项目生成在 bin 目录或非 Release 目录
           Get-ChildItem -Path build/bin -Recurse -Include *.exe, *.dll -ErrorAction SilentlyContinue | ForEach-Object {
               Copy-Item -Path $_.FullName -Destination dist/ -Force
           }
 
-          # 3. 收集 VC++ 运行时库（防止其他机器提示缺少 MSVCP140.dll 等）
+          # 补齐 VC++ 运行库，避免脱机运行缺 dll
           $redistPath = "$env:VCToolsRedistDir\x64\Microsoft.VC143.CRT"
           if (Test-Path $redistPath) {
               Copy-Item -Path "$redistPath\*.dll" -Destination dist/ -Force
           }
 
-          # 查看最终打包目录结构
-          Get-ChildItem -Path dist
-
-      # 7. 上传可直接解压运行的压缩包 Artifact
+      # 7. 上传 Artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
