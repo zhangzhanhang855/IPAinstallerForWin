@@ -15,36 +15,19 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      # 1. 仅拉取代码与子模块，暂时关闭 lfs 自动下载避免 404
-      - name: Checkout repository without LFS
+      # 1. 直接以公共匿名方式完整拉取上游仓库（带所有子模块和 LFS）
+      - name: Checkout upstream repository with LFS
         uses: actions/checkout@v4
         with:
+          repository: jjonescz/ipasim
+          ref: develop
           submodules: recursive
-          lfs: false
-          fetch-depth: 1
+          lfs: true
+          persist-credentials: false
 
-      # 2. 携带 GitHub Token 授权从上游拉取 LFS
-      - name: Pull LFS objects from upstream
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git lfs install
-
-          # 1. 移除可能导致冲突的旧设置
-          git config --unset-all http.https://github.com/.extraheader 2>$null
-          git remote remove upstream 2>$null
-
-          # 2. 添加上游仓库并配置免交互认证 URL
-          git remote add upstream "https://x-access-token:${env:GH_TOKEN}@github.com/jjonescz/ipasim.git"
-
-          # 3. 明确指定 LFS 端点 URL，内嵌 Token 解决凭据缺失
-          git config lfs.url "https://x-access-token:${env:GH_TOKEN}@github.com/jjonescz/ipasim.git/info/lfs"
-
-          # 4. 执行拉取
-          git lfs pull upstream
-
-
+      # 2. 检查验证 LFS 文件完整性
+      - name: Verify Git LFS objects
+        run: git lfs pull
 
       # 3. 初始化 64位 MSVC 编译环境
       - name: Set up MSVC Developer Command Prompt
@@ -84,6 +67,9 @@ jobs:
           if (Test-Path $redistPath) {
               Copy-Item -Path "$redistPath\*.dll" -Destination dist/ -Force
           }
+
+          # 打印打包目录验证结果
+          Get-ChildItem -Path dist
 
       # 7. 上传 Artifact
       - name: Upload Artifact
