@@ -23,18 +23,27 @@ jobs:
           lfs: false
           fetch-depth: 1
 
-      # 2. 清除 Authorization 请求头并从上游拉取 LFS
+      # 2. 携带 GitHub Token 授权从上游拉取 LFS
       - name: Pull LFS objects from upstream
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git lfs install
-          # 移除 checkout 步骤注入的私有凭据干扰
-          git config --unset-all http.https://github.com/.extraheader
-          # 添加原作者仓库为 upstream
-          git remote add upstream https://github.com/jjonescz/ipasim.git
-          # 向上游请求 LFS 数据
-          git config lfs.url "https://github.com/jjonescz/ipasim.git/info/lfs"
+
+          # 1. 移除可能导致冲突的旧设置
+          git config --unset-all http.https://github.com/.extraheader 2>$null
+          git remote remove upstream 2>$null
+
+          # 2. 添加上游仓库并配置免交互认证 URL
+          git remote add upstream "https://x-access-token:${env:GH_TOKEN}@github.com/jjonescz/ipasim.git"
+
+          # 3. 明确指定 LFS 端点 URL，内嵌 Token 解决凭据缺失
+          git config lfs.url "https://x-access-token:${env:GH_TOKEN}@github.com/jjonescz/ipasim.git/info/lfs"
+
+          # 4. 执行拉取
           git lfs pull upstream
+
 
 
       # 3. 初始化 64位 MSVC 编译环境
