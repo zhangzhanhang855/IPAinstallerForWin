@@ -1,0 +1,76 @@
+name: Build and Package Windows Executable
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022 # 建议指定 windows-2022，环境对该时期的 CMake/MSVC 最稳定
+
+    steps:
+      # 1. 递归拉取所有 Submodules 并下载 LFS 文件
+      - name: Checkout repository with submodules and LFS
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: true
+          fetch-depth: 1
+
+      # 2. 检查并确保 LFS 资源完整
+      - name: Ensure Git LFS pulled
+        run: git lfs pull
+
+      # 3. 初始化 64位 MSVC 编译环境
+      - name: Set up MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # 4. 执行 CMake 配置（生成 VS/MSBuild 工程）
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=Release `
+            -A x64
+
+      # 5. 编译整个工程（Release 模式）
+      - name: Build with CMake
+        run: |
+          cmake --build build --config Release --parallel
+
+      # 6. 打包 EXE 及其所有依赖项（保证免安装且不缺失 DLL）
+      - name: Package Distributable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+
+          # 1. 复制所有生成好的可执行文件与项目动态库
+          Get-ChildItem -Path build -Recurse -Include *.exe, *.dll | Where-Object { $_.FullName -like "*Release*" } | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination dist/ -Force
+          }
+
+          # 2. 补漏：如果项目生成在 bin 目录或非 Release 目录
+          Get-ChildItem -Path build/bin -Recurse -Include *.exe, *.dll -ErrorAction SilentlyContinue | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination dist/ -Force
+          }
+
+          # 3. 收集 VC++ 运行时库（防止其他机器提示缺少 MSVCP140.dll 等）
+          $redistPath = "$env:VCToolsRedistDir\x64\Microsoft.VC143.CRT"
+          if (Test-Path $redistPath) {
+              Copy-Item -Path "$redistPath\*.dll" -Destination dist/ -Force
+          }
+
+          # 查看最终打包目录结构
+          Get-ChildItem -Path dist
+
+      # 7. 上传可直接解压运行的压缩包 Artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipasim-windows-x64
+          path: dist/
+          if-no-files-found: error
