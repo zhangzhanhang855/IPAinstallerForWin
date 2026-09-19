@@ -23,14 +23,19 @@ jobs:
           lfs: false
           fetch-depth: 1
 
-      # 2. 将 LFS 源重定向至上游原仓库并完成拉取
+      # 2. 清除 Authorization 请求头并从上游拉取 LFS
       - name: Pull LFS objects from upstream
         shell: pwsh
         run: |
           git lfs install
-          # 将 LFS 远程端点临时指向原项目仓库
+          # 移除 checkout 步骤注入的私有凭据干扰
+          git config --unset-all http.https://github.com/.extraheader
+          # 添加原作者仓库为 upstream
+          git remote add upstream https://github.com/jjonescz/ipasim.git
+          # 向上游请求 LFS 数据
           git config lfs.url "https://github.com/jjonescz/ipasim.git/info/lfs"
-          git lfs pull
+          git lfs pull upstream
+
 
       # 3. 初始化 64位 MSVC 编译环境
       - name: Set up MSVC Developer Command Prompt
